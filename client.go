@@ -27,4 +27,5 @@ type Client interface {
 
 	Search(*SearchRequest) (*SearchResult, error)
 	SearchWithPaging(searchRequest *SearchRequest, pagingSize uint32) (*SearchResult, error)
+	SearchByPage(searchRequest *SearchRequest, pagingSize uint32) (*SearchResult, error)
 }

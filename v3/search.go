@@ -355,6 +355,78 @@ func (l *Conn) SearchWithPaging(searchRequest *SearchRequest, pagingSize uint32)
 	return searchResult, nil
 }
 
+// SearchByPage accepts a search request and desired page size in order to execute LDAP queries to fulfill the
+// search request. All paged LDAP query responses will be returned one page at a time.  The cookie associated
+// with the pagingControl object keeps track of which page we are on, no control visible to the client
+// The following four cases are possible given the arguments:
+//  - given SearchRequest missing a control of type ControlTypePaging: we will add one with the desired paging size
+//  - given SearchRequest contains a control of type ControlTypePaging that isn't actually a ControlPaging: fail without issuing any queries
+//  - given SearchRequest contains a control of type ControlTypePaging with pagingSize equal to the size requested: no change to the search request
+//  - given SearchRequest contains a control of type ControlTypePaging with pagingSize not equal to the size requested: fail without issuing any queries
+// A requested pagingSize of 0 is interpreted as no limit by LDAP servers.
+func (l *Conn) SearchWithPaging(searchRequest *SearchRequest, pagingSize uint32) (*SearchResult, error) {
+	var pagingControl *ControlPaging
+
+	control := FindControl(searchRequest.Controls, ControlTypePaging)
+	if control == nil {
+		pagingControl = NewControlPaging(pagingSize)
+		searchRequest.Controls = append(searchRequest.Controls, pagingControl)
+	} else {
+		castControl, ok := control.(*ControlPaging)
+		if !ok {
+			return nil, fmt.Errorf("expected paging control to be of type *ControlPaging, got %v", control)
+		}
+		if castControl.PagingSize != pagingSize {
+			return nil, fmt.Errorf("paging size given in search request (%d) conflicts with size given in search call (%d)", castControl.PagingSize, pagingSize)
+		}
+		pagingControl = castControl
+	}
+
+	searchResult := new(SearchResult)
+	result, err := l.Search(searchRequest)
+	l.Debug.Printf("Looking for Paging Control...")
+	if err != nil {
+		return searchResult, err
+	}
+	if result == nil {
+		return searchResult, NewError(ErrorNetwork, errors.New("ldap: packet not received"))
+	}
+
+	for _, entry := range result.Entries {
+		searchResult.Entries = append(searchResult.Entries, entry)
+	}
+	for _, referral := range result.Referrals {
+		searchResult.Referrals = append(searchResult.Referrals, referral)
+	}
+	for _, control := range result.Controls {
+		searchResult.Controls = append(searchResult.Controls, control)
+	}
+
+	l.Debug.Printf("Looking for Paging Control...")
+	pagingResult := FindControl(result.Controls, ControlTypePaging)
+	if pagingResult == nil {
+		pagingControl = nil
+		l.Debug.Printf("Could not find paging control.  Breaking...")
+		break
+	}
+
+	cookie := pagingResult.(*ControlPaging).Cookie
+	if len(cookie) == 0 {
+		pagingControl = nil
+		l.Debug.Printf("Could not find cookie.  Breaking...")
+		break
+	}
+	pagingControl.SetCookie(cookie)
+
+	if pagingControl != nil {
+		l.Debug.Printf("Abandoning Paging...")
+		pagingControl.PagingSize = 0
+		l.Search(searchRequest)
+	}
+
+	return searchResult, nil
+}
+
 // Search performs the given search request
 func (l *Conn) Search(searchRequest *SearchRequest) (*SearchResult, error) {
 	msgCtx, err := l.doRequest(searchRequest)

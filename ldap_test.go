@@ -174,6 +174,56 @@ func TestSearchWithPaging(t *testing.T) {
 	}
 }
 
+func TestSearchByPage(t *testing.T) {
+	l, err := DialURL(ldapServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	err = l.UnauthenticatedBind("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	searchRequest := NewSearchRequest(
+		baseDN,
+		ScopeWholeSubtree, DerefAlways, 0, 0, false,
+		filter[2],
+		attributes,
+		nil)
+	sr, err := l.SearchByPage(searchRequest, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("TestSearchByPage: %s -> num of entries = %d", searchRequest.Filter, len(sr.Entries))
+
+	searchRequest = NewSearchRequest(
+		baseDN,
+		ScopeWholeSubtree, DerefAlways, 0, 0, false,
+		filter[2],
+		attributes,
+		[]Control{NewControlPaging(5)})
+	sr, err = l.SearchByPage(searchRequest, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("TestSearchByPage: %s -> num of entries = %d", searchRequest.Filter, len(sr.Entries))
+
+	searchRequest = NewSearchRequest(
+		baseDN,
+		ScopeWholeSubtree, DerefAlways, 0, 0, false,
+		filter[2],
+		attributes,
+		[]Control{NewControlPaging(500)})
+	sr, err = l.SearchByPage(searchRequest, 5)
+	if err == nil {
+		t.Fatal("expected an error when paging size in control in search request doesn't match size given in call, got none")
+	}
+}
+
 func searchGoroutine(t *testing.T, l *Conn, results chan *SearchResult, i int) {
 	searchRequest := NewSearchRequest(
 		baseDN,
